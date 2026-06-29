@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(layout="wide", page_title="Volume Top 50 Dashboard")
 st.title("📊 4대 지수 거래량 상위 50 판단 대시보드")
-st.caption("인덱스 제거, 주간 거래량 추세 그래프, ETF명 매핑 완결판")
+st.caption("구문 오류 해결, 인덱스 제거, 주간 거래량 추세 그래프, ETF명 매핑 완결판")
 
 # ----------------------------------------------------------------------
 # 날짜 바인딩 (직전 3개월 주차별)
@@ -53,38 +53,8 @@ def get_ticker_pool(market_name):
 @st.cache_data
 def get_master_name_map():
     return {
-        # 미국 주식 및 주요 ETF 매핑
         "NVDA":"엔비디아", "AAPL":"애플", "MSFT":"마이크로소프트", "AMZN":"아마존", "GOOGL":"알파벳", "TSLA":"테슬라", "META":"메타", "AMD":"AMD", "INTC":"인텔", "NFLX":"넷플릭스",
         "QQQ":"Invesco QQQ (나스닥100 ETF)", "TQQQ":"ProShares 나스닥 3배 레버리지 ETF", "SQQQ":"ProShares 나스닥 3배 인버스 ETF", "AVGO":"브로드컴", "COST":"코스트코", "PEP":"펩시코",
-        # 한국 주식 및 주요 지수 ETF 매핑
         "005930":"삼성전자", "000660":"SK하이닉스", "373220":"LG에너지솔루션", "207940":"삼성바이오로직스", "005380":"현대차", "005490":"POSCO홀딩스", "000270":"기아", "035420":"NAVER",
         "069500":"KODEX 200 (코스피 대표 ETF)", "114800":"KODEX 인버스 ETF", "252670":"KODEX 200선물인버스2X ETF", "122630":"KODEX 레버리지 ETF", 
-        "251340":"KODEX 코스닥150선물인버스 ETF", "102110":"TIGER 200 ETF", "139260":"TIGER 200 경기소비재 ETF", "252710":"TIGER 200선물인버스2X ETF"
-    }
-
-# ----------------------------------------------------------------------
-# 데이터 로드 코어 엔진
-# ----------------------------------------------------------------------
-@st.cache_data(ttl=86400)
-def get_volume_fact_data(market_name, start_date, end_date):
-    tickers = get_ticker_pool(market_name)
-    st_dt = datetime.strptime(start_date, "%Y-%m-%d")
-    prev_start = (st_dt - timedelta(days=14)).strftime("%Y-%m-%d")
-    name_map = get_master_name_map()
-    
-    try:
-        formatted_tickers = []
-        for t in tickers:
-            if market_name == "KOSPI": formatted_tickers.append(f"{t}.KS")
-            elif market_name == "KOSDAQ": formatted_tickers.append(f"{t}.KQ")
-            else: formatted_tickers.append(t)
-            
-        df = yf.download(" ".join(formatted_tickers), start=prev_start, end=end_date, group_by='ticker', progress=False)
-        
-        data_list = []
-        for t in tickers:
-            lookup_key = f"{t}.KS" if market_name == "KOSPI" else (f"{t}.KQ" if market_name == "KOSDAQ" else t)
-            
-            if lookup_key in df.columns.levels[0]:
-                t_df = df[lookup_key].dropna()
-                if
+        "2
