@@ -1,179 +1,148 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-from pykrx import stock
+import FinanceDataReader as fdr
 from datetime import datetime, timedelta
 
-# 페이지 기본 설정
 st.set_page_config(layout="wide", page_title="Volume Top 50 Dashboard")
-st.title("📊 4대 지수 거래량 상위 50 분석 대시보드")
-st.caption("S&P 500, NASDAQ, KOSPI, KOSDAQ 직전 3개월 주차별 팩트 데이터 분석")
+st.title("📊 4대 지수 거래량 상위 50 판단 대시보드")
+st.caption("천단위 콤마, 기업명 표기, 주간 거래량 추세 그래프 내장 버전")
 
 # ----------------------------------------------------------------------
-# [팩트 기반] 직전 3개월 주차별 날짜 매핑 데이터 생성 (월요일~금요일 기준)
+# [안정성 확보] 직전 3개월 주차별 날짜 생성 (12주차)
 # ----------------------------------------------------------------------
-def generate_weekly_options():
-    """직전 3개월 내의 모든 주차별 [시작일, 종료일]을 생성하는 함수"""
+@st.cache_data
+def get_cached_weeks():
     options = {}
     today = datetime.today()
-    
-    # 안전하게 오늘부터 역산하여 14주(약 3개월) 분량의 주차 계산
-    for i in range(14):
-        # 해당 주차의 월요일과 금요일 계산
+    for i in range(12): 
         monday = today - timedelta(days=today.weekday() + (i * 7))
         friday = monday + timedelta(days=4)
+        if monday > today: continue
         
-        # 미래의 데이터는 생성하지 않음
-        if monday > datetime.today():
-            continue
-            
-        # UI에 표시할 포맷 (예: "2026년 06월 4주차 (06.22 ~ 06.26)")
-        month_str = monday.strftime("%m")
-        week_num = (monday.day - 1) // 7 + 1
-        label = f"{monday.strftime('%Y년')} {month_str}월 {week_num}주차 ({monday.strftime('%m.%d')} ~ {friday.strftime('%m.%d')})"
-        
+        label = f"📅 {monday.strftime('%Y년 %m월')} {(monday.day - 1) // 7 + 1}주차 ({monday.strftime('%m.%d')} ~ {friday.strftime('%m.%d')})"
         options[label] = {
-            "start_kr": monday.strftime("%Y%m%d"),
-            "end_kr": friday.strftime("%Y%m%d"),
-            "start_us": monday.strftime("%Y-%m-%d"),
-            "end_us": friday.strftime("%Y-%m-%d")
+            "start": monday.strftime("%Y-%m-%d"),
+            "end": friday.strftime("%Y-%m-%d")
         }
     return options
 
-# 주차 선택 드롭다운 풀 생성
-weekly_options = generate_weekly_options()
+weekly_options = get_cached_weeks()
 
-# ----------------------------------------------------------------------
-# 사이드바 제어 설정 (드롭다운 기능 추가)
-# ----------------------------------------------------------------------
+# 사이드바 제어 설정
 st.sidebar.header("🔧 대시보드 제어판")
-
-# 드롭다운 형식으로 원하는 주차 선택 가능 (기본값은 항상 가장 최신 최근 주차)
-selected_week_label = st.sidebar.selectbox("조회할 주차 선택 (직전 3개월)", list(weekly_options.keys()))
+selected_week_label = st.sidebar.selectbox("🔍 조회 주차 선택 (직전 3개월)", list(weekly_options.keys()))
 selected_dates = weekly_options[selected_week_label]
-
-exclude_decreased = st.sidebar.checkbox("주단위 거래량 감소 종목 제외", value=False)
-
-st.sidebar.info(f"선택된 조회 기간:\n{selected_dates['start_us']} ~ {selected_dates['end_us']}")
+exclude_decreased = st.sidebar.checkbox("📉 주간 거래량 감소 종목 필터링 (제외)", value=False)
 
 # ----------------------------------------------------------------------
-# 데이터 로드 함수 (선택된 날짜 기반 팩트 추출)
+# [엔진 교체] 글로벌/국내 데이터 통합 수집 및 가공
 # ----------------------------------------------------------------------
-@st.cache_data(ttl=3600)
-def get_us_volume_data(tickers, start_date, end_date):
-    """미국 주식 선택 기간 거래량 및 직전 기간 대비 증감률 산출"""
-    data_list = []
-    tickers_str = " ".join(tickers[:100])
-    
-    # 직전 주 데이터 비교를 위해 조회 시작일을 2주일 전으로 확장
+@st.cache_data(ttl=86400)
+def get_volume_data_v2(market_type, start_date, end_date):
+    """FinanceDataReader 및 yfinance 기반 고속/안정 데이터 수집"""
     st_dt = datetime.strptime(start_date, "%Y-%m-%d")
-    extended_start = (st_dt - timedelta(days=14)).strftime("%Y-%m-%d")
+    prev_start = (st_dt - timedelta(days=14)).strftime("%Y-%m-%d")
     
     try:
-        df = yf.download(tickers_str, start=extended_start, end=end_date, group_by='ticker', progress=False)
-        
-        for ticker in tickers[:100]:
-            if ticker in df.columns.levels[0]:
-                t_df = df[ticker].dropna()
-                if len(t_df) >= 3:
-                    # 해당 주차의 마지막 날 거래량
-                    daily_vol = t_df['Volume'].iloc[-1]
+        if market_type in ["KOSPI", "KOSDAQ"]:
+            # 한국 거래소 데이터 수집 (FinanceDataReader 활용으로 에러 원천 차단)
+            df_target = fdr.StockListing(market_type)
+            data_list = []
+            
+            # 상위 거래대금 리스트업을 위해 마켓 데이터 수집
+            for _, row in df_target.head(120).iterrows():
+                ticker = row['Code']
+                name = row['Name']
+                
+                # 개별 종목 기간 데이터 바인딩
+                hist = fdr.DataReader(ticker, prev_start, end_date)
+                if not hist.empty and len(hist) >= 5:
+                    this_week_vol = hist['Volume'].loc[start_date:end_date].sum()
+                    prev_week_vol = hist['Volume'].loc[prev_start:start_date].sum()
                     
-                    # 해당 주차 평균 거래량 vs 직전 주차 평균 거래량
-                    this_week_avg = t_df['Volume'].loc[start_date:end_date].mean()
-                    prev_week_avg = t_df['Volume'].loc[extended_start:start_date].mean()
+                    if pd.isna(this_week_vol): this_week_vol = 0
+                    if pd.isna(prev_week_vol) or prev_week_vol == 0: prev_week_vol = 1
                     
-                    if pd.isna(this_week_avg): this_week_avg = 0
-                    if pd.isna(prev_week_avg) or prev_week_avg == 0: prev_week_avg = 1
-                    
-                    weekly_change = ((this_week_avg - prev_week_avg) / prev_week_avg) * 100
+                    change = ((this_week_vol - prev_week_vol) / prev_week_vol) * 100
                     
                     data_list.append({
-                        "티커": ticker,
-                        "해당주차종가": t_df['Close'].iloc[-1],
-                        "주차말일거래량": int(daily_vol),
-                        "선택주차평균거래량": int(this_week_avg),
-                        "주간거래량증감(%)": round(weekly_change, 2)
+                        "기업명": name, "티커": ticker, 
+                        "현재가": int(hist['Close'].iloc[-1]), 
+                        "선택주차 누적거래량": int(this_week_vol), 
+                        "전주대비 증감률(%)": round(change, 2)
                     })
-    except Exception:
-        pass
-    return pd.DataFrame(data_list)
-
-@st.cache_data(ttl=3600)
-def get_kr_volume_data(market_code, start_date, end_date):
-    """한국 주식 선택 기간 누적 거래량 및 직전 주 대비 증감률 산출"""
-    st_dt = datetime.strptime(start_date, "%Y%m%d")
-    prev_start = (st_dt - timedelta(days=7)).strftime("%Y%m%d")
-    
-    try:
-        # 선택한 주차 기간의 누적 데이터
-        df_this_week = stock.get_market_price_change_by_ticker(start_date, end_date, market_code)
-        # 직전 주차 기간의 누적 데이터 (비교용)
-        df_prev_week = stock.get_market_price_change_by_ticker(prev_start, start_date, market_code)
-        
-        if df_this_week.empty:
-            # 해당 날짜 데이터가 아직 없으면(예: 데이터 미생성 휴일) 에러 방지용 역산
-            return pd.DataFrame()
+            return pd.DataFrame(data_list)
             
-        data_list = []
-        for ticker in df_this_week.index[:150]:
-            name = stock.get_market_ticker_name(ticker)
+        else:
+            # 미국 시장 데이터 수집 (S&P500 / NASDAQ 샘플 풀 고도화)
+            tickers_map = {
+                "S&P 500": {"NVDA":"엔비디아", "AAPL":"애플", "MSFT":"마이크로소프트", "AMZN":"아마존", "GOOGL":"알파벳", "TSLA":"테슬라", "META":"메타", "AMD":"AMD", "INTC":"인텔", "NFLX":"넷플릭스"},
+                "NASDAQ": {"QQQ":"QQQ ETF", "AVGO":"브로드컴", "COST":"코스트코", "PEP":"펩시코", "ADBE":"어도비", "CMCSA":"컴캐스트", "TMUS":"티모바일", "TXN":"텍사스인스트루먼트"}
+            }
+            curr_map = tickers_map[market_type]
+            df = yf.download(" ".join(curr_map.keys()), start=prev_start, end=end_date, group_by='ticker', progress=False)
             
-            this_week_vol = df_this_week.loc[ticker, '거래량'] if ticker in df_this_week.index else 0
-            prev_week_vol = df_prev_week.loc[ticker, '거래량'] if ticker in df_prev_week.index else 0
-            
-            weekly_change = ((this_week_vol - prev_week_vol) / prev_week_vol) * 100 if prev_week_vol > 0 else 0
-            
-            data_list.append({
-                "종목명": name,
-                "티커": ticker,
-                "해당주차종가": df_this_week.loc[ticker, '종가'] if ticker in df_this_week.index else 0,
-                "선택주차누적거래량": int(this_week_vol),
-                "주간거래량증감(%)": round(weekly_change, 2)
-            })
-        return pd.DataFrame(data_list)
-    except Exception:
+            data_list = []
+            for ticker, name in curr_map.items():
+                if ticker in df.columns.levels[0]:
+                    t_df = df[ticker].dropna()
+                    if not t_df.empty:
+                        this_week_avg = t_df['Volume'].loc[start_date:end_date].mean()
+                        prev_week_avg = t_df['Volume'].loc[prev_start:start_date].mean()
+                        
+                        if pd.isna(this_week_avg): this_week_avg = 0
+                        if pd.isna(prev_week_avg) or prev_week_avg == 0: prev_week_avg = 1
+                        
+                        change = ((this_week_avg - prev_week_avg) / prev_week_avg) * 100
+                        
+                        data_list.append({
+                            "기업명": name, "티커": ticker, 
+                            "현재가": round(t_df['Close'].iloc[-1], 2), 
+                            "선택주차 평균거래량": int(this_week_avg), 
+                            "전주대비 증감률(%)": round(change, 2)
+                        })
+            return pd.DataFrame(data_list)
+    except:
         return pd.DataFrame()
 
 # ----------------------------------------------------------------------
-# 메인 대시보드 뷰 구성
+# 화면 렌더링 엔진 (인라인 그래프 및 포맷팅 적용)
 # ----------------------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs(["S&P 500", "NASDAQ", "KOSPI", "KOSDAQ"])
+tabs = st.tabs(["🇺🇸 S&P 500", "🇺🇸 NASDAQ", "🇰🇷 KOSPI", "🇰🇷 KOSDAQ"])
+market_names = ["S&P 500", "NASDAQ", "KOSPI", "KOSDAQ"]
 
-def display_dashboard(df_data, is_kr=False):
-    if df_data.empty:
-        st.warning("선택하신 기간의 거래소 팩트 데이터가 존재하지 않거나 호출 범위 제한을 초과했습니다. 다른 주차를 선택해 주세요.")
-        return
-    
-    # 감소 종목 필터링 팩트 적용
-    if exclude_decreased:
-        df_data = df_data[df_data["주간거래량증감(%)"] >= 0]
+for tab, m_name in zip(tabs, market_names):
+    with tab:
+        df_raw = get_volume_data_v2(m_name, selected_dates["start"], selected_dates["end"])
         
-    sort_key = "선택주차누적거래량" if is_kr else "선택주차평균거래량"
-    vol_label = "주차말일거래량" if not is_kr else "선택주차누적거래량"
-    
-    st.subheader(f"📅 {selected_week_label} 거래량 상위 50위")
-    
-    # 지정 정렬 기준에 따라 상위 50위 소팅
-    df_result = df_data.sort_values(by=sort_key, ascending=False).head(50).reset_index(drop=True)
-    st.dataframe(df_result, use_container_width=True)
-
-# 샘플 데이터 인덱스 매핑 풀
-sp500_tickers = ["NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "TSLA", "META", "AMD", "INTC", "NFLX"]
-nasdaq_tickers = ["QQQ", "AVGO", "COST", "PEP", "ADBE", "CMCSA", "TMUS", "TXN", "AMAT", "QCOM"]
-
-with tab1:
-    df_sp = get_us_volume_data(sp500_tickers, selected_dates["start_us"], selected_dates["end_us"])
-    display_dashboard(df_sp, is_kr=False)
-
-with tab2:
-    df_nd = get_us_volume_data(nasdaq_tickers, selected_dates["start_us"], selected_dates["end_us"])
-    display_dashboard(df_nd, is_kr=False)
-
-with tab3:
-    df_kospi = get_kr_volume_data("STK", selected_dates["start_kr"], selected_dates["end_kr"])
-    display_dashboard(df_kospi, is_kr=True)
-
-with tab4:
-    df_kosdaq = get_kr_volume_data("KSQ", selected_dates["start_kr"], selected_dates["end_kr"])
-    display_dashboard(df_kosdaq, is_kr=True)
+        if df_raw.empty:
+            st.error("데이터 제공처 동기화 지연 또는 휴장일입니다. 사이드바에서 다른 주차를 선택해 주세요.")
+        else:
+            # 1. 감소 종목 필터링
+            if exclude_decreased:
+                df_raw = df_raw[df_raw["전주대비 증감률(%)"] >= 0]
+            
+            # 2. 정렬 및 상위 50위 커팅
+            sort_key = "선택주차 누적거래량" if "KOSPI" in m_name or "KOSDAQ" in m_name else "선택주차 평균거래량"
+            df_top50 = df_raw.sort_values(by=sort_key, ascending=False).head(50).reset_index(drop=True)
+            
+            # 3. 가독성 가공 (천단위 콤마 포맷팅 지정)
+            df_styled = df_top50.copy()
+            
+            st.subheader(f"📊 {m_name} 거래량 상위 파악 뷰")
+            
+            # 4. 판다스 스타일러를 활용한 시각적 인라인 그래프(Bar) 삽입
+            st.dataframe(
+                df_styled.style.format({
+                    "현재가": "{:,.0f}" if "KOSPI" in m_name or "KOSDAQ" in m_name else "{:,.2f}",
+                    sort_key: "{:,.0f}",
+                    "전주대비 증감률(%)": "{:+.2f}%"
+                }).bar(
+                    subset=["전주대비 증감률(%)"], 
+                    align="mid", 
+                    color=["#FF4B4B", "#00CC96"] # 감소는 빨강, 증가 및 폭발은 녹색 계열 그래프 매핑
+                ),
+                use_container_width=True,
+                height=600
+            )
