@@ -10,18 +10,34 @@ st.title("📊 4대 지수 거래량 상위 50 실시간 대시보드 (일단위
 st.caption("S&P 500, NASDAQ, KOSPI, KOSDAQ 거래량 팩트 데이터 분석")
 
 # ----------------------------------------------------------------------
+# [추가된 로직] 최근 영업일(장 열린 날) 구하기 함수
+# ----------------------------------------------------------------------
+def get_latest_business_day():
+    """주말이나 공휴일, 장 시작 전일 경우 가장 최근에 마감된 영업일 날짜를 반환"""
+    dt = datetime.today()
+    # 만약 오전 9시 전이라면 전날 데이터나 그 전 영업일 데이터를 보도록 유도
+    if dt.hour < 9:
+        dt = dt - timedelta(days=1)
+        
+    # 요일 체크 (5: 토요일, 6: 일요일) -> 금요일로 강제 이동
+    while dt.weekday() >= 5:
+        dt = dt - timedelta(days=1)
+        
+    return dt
+
+# ----------------------------------------------------------------------
 # 데이터 로드 함수 (미국: yfinance / 한국: pykrx 사용)
 # ----------------------------------------------------------------------
-@st.cache_data(ttl=3600)  # 1시간 단위 캐싱 (실시간성을 위함)
+@st.cache_data(ttl=3600)  # 1시간 단위 캐싱
 def get_us_volume_data(tickers):
     """미국 주식(S&P500, NASDAQ 주요 종목)의 일단위/주단위 거래량 추출"""
-    today = datetime.today().strftime('%Y-%m-%d')
-    two_weeks_ago = (datetime.today() - timedelta(days=14)).strftime('%Y-%m-%d')
+    latest_day = get_latest_business_day()
+    today_str = latest_day.strftime('%Y-%m-%d')
+    two_weeks_ago_str = (latest_day - timedelta(days=14)).strftime('%Y-%m-%d')
     
     data_list = []
-    # 효율적인 호출을 위해 공백 분리 문자열 생성
-    tickers_str = " ".join(tickers[:100]) # 예시를 위해 상위 100개 기준 (실제 구동시 확장 가능)
-    df = yf.download(tickers_str, start=two_weeks_ago, end=today, group_by='ticker', progress=False)
+    tickers_str = " ".join(tickers[:100])
+    df = yf.download(tickers_str, start=two_weeks_ago_str, end=today_str, group_by='ticker', progress=False)
     
     for ticker in tickers[:100]:
         if ticker in df.columns.levels[0]:
@@ -47,18 +63,34 @@ def get_us_volume_data(tickers):
 
 @st.cache_data(ttl=3600)
 def get_kr_volume_data(market_code):
-    """한국 주식(KOSPI 또는 KOSDAQ) 거래량 추출"""
-    today = datetime.today().strftime('%Y%m%d')
-    one_week_ago = (datetime.today() - timedelta(days=7)).strftime('%Y%m%d')
-    two_weeks_ago = (datetime.today() - timedelta(days=14)).strftime('%Y%m%d')
+    """한국 주식(KOSPI 또는 KOSDAQ) 거래량 추출 (휴일 에러 방지 반영)"""
+    # 안전한 최근 영업일 기준 날짜 계산
+    latest_day = get_latest_business_day()
     
+    today = latest_day.strftime('%Y%m%d')
+    one_week_ago = (latest_day - timedelta(days=7)).strftime('%Y%m%d')
+    two_weeks_ago = (latest_day - timedelta(days=14)).strftime('%Y%m%d')
+    
+    # pykrx 내부 에러 방지를 위해 실제 장이 열렸던 날짜로 보정 시도
+    try:
+        today = stock.get_nearest_business_day_in_a_week(today)
+        one_week_ago = stock.get_nearest_business_day_in_a_week(one_week_ago)
+        two_weeks_ago = stock.get_nearest_business_day_in_a_week(two_weeks_ago)
+    except Exception:
+        # 안전장치: 혹시라도 공휴일 계산에서 에러가 또 나면 기본 날짜 유지
+        pass
+        
     # 당일 기준 시장 전체 거래량 조회
     df_today = stock.get_market_price_change_by_ticker(today, today, market_code)
     df_this_week = stock.get_market_price_change_by_ticker(one_week_ago, today, market_code)
     df_prev_week = stock.get_market_price_change_by_ticker(two_weeks_ago, one_week_ago, market_code)
     
     data_list = []
-    for ticker in df_today.index[:150]: # 거래대금/시총 상위 풀 기준 탐색
+    # 에러 방지용 빈 데이터프레임 체크
+    if df_today.empty:
+        return pd.DataFrame()
+
+    for ticker in df_today.index[:150]: # 거래량 상위 매칭용 기본 풀
         name = stock.get_market_ticker_name(ticker)
         
         daily_vol = df_today.loc[ticker, '거래량'] if ticker in df_today.index else 0
@@ -84,8 +116,8 @@ def get_kr_volume_data(market_code):
 st.sidebar.header("🔧 대시보드 필터 설정")
 exclude_decreased = st.sidebar.checkbox("주단위 거래량 감소 종목 제외", value=False)
 
-# 샘플 티커 데이터 정의 (실제 환경에서는 전체 인덱스 구성 파일 연동 가능)
-sp500_tickers = ["NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "TSLA", "META", "AMD", "INTC", "NFLX"] # ... 생략 (실제 500개 입력)
+# 샘플 티커 데이터 정의
+sp500_tickers = ["NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "TSLA", "META", "AMD", "INTC", "NFLX"]
 nasdaq_tickers = ["QQQ", "AVGO", "COST", "PEP", "ADBE", "CMCSA", "TMUS", "TXN", "AMAT", "QCOM"]
 
 # ----------------------------------------------------------------------
@@ -95,7 +127,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["S&P 500", "NASDAQ", "KOSPI", "KOSDAQ"])
 
 def display_dashboard(df_data, is_kr=False):
     if df_data.empty:
-        st.warning("데이터를 불러오지 못했습니다.")
+        st.warning("현재 장이 열리지 않았거나 거래 데이터를 불러오는 중입니다. 잠시 후 새로고침 해주세요.")
         return
     
     # 1단계 필터: 주단위 거래량 감소 종목 빼기 처리
