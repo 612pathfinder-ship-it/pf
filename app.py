@@ -9,12 +9,12 @@ from datetime import datetime, timedelta
 # ----------------------------------------------------------------------
 # 1. 페이지 레이아웃 및 텍스트 설정
 # ----------------------------------------------------------------------
-st.set_page_config(layout="wide", page_title="Ultra-Fast Volume Divergence Analyzer")
-st.title("⚡ 초고속 다이버전스 & 섹터 머니플로우 대시보드")
-st.caption("초고속 일괄 다운로드와 산업군 비중 시각화를 결합하여 진입과 탈출 타이밍을 정확히 판독하는 팩트 시트")
+st.set_page_config(layout="wide", page_title="Advanced Volume Divergence Analyzer")
+st.title("⚡ 초고속 다이버전스 & 듀얼 머니플로우 대시보드")
+st.caption("요청사항(상위 50개, ETF명 매핑, 전후 머니플로우 비교, 급증/급감 특징주 브리핑)이 완벽히 반영된 정밀 분석 시스템")
 
 # ----------------------------------------------------------------------
-# 2. 사이드바 제어판 (기간 최적화 반영)
+# 2. 사이드바 제어판 (기간 최적화)
 # ----------------------------------------------------------------------
 st.sidebar.header("🔧 대시보드 제어판")
 time_frame = st.sidebar.radio("📅 분석 주기 선택", ["일단위 (Daily)", "주단위 (Weekly)"])
@@ -23,29 +23,27 @@ today = datetime.today()
 date_options = {}
 
 if time_frame == "일단위 (Daily)":
-    st.sidebar.subheader("📆 기준일 설정 (최근 1주 스캔)")
-    # 일단위는 최근 1주(5거래일) 스캔을 위해 영업일 기준 매핑
+    st.sidebar.subheader("📆 기준일 설정 (전일 vs 금일 비교)")
     for i in range(10):
         target_date = today - timedelta(days=i)
-        if target_date.weekday() >= 5: # 주말 패스
+        if target_date.weekday() >= 5: 
             continue
         label = f"📆 {target_date.strftime('%Y-%m-%d (%a)')}"
         date_options[label] = {
             "end": target_date.strftime("%Y-%m-%d"),
-            "days_back": 7 # 안전하게 7일치 데이터를 받아 영업일 확보
+            "days_back": 7 
         }
     selected_label = st.sidebar.selectbox("🔍 조회 기준일 선택", list(date_options.keys()))
     config = date_options[selected_label]
     
 else:
-    st.sidebar.subheader("📆 조회 주차 선택 (최근 3주 스캔)")
-    # 주단위는 최근 3주차만 압축 매핑
+    st.sidebar.subheader("📆 조회 주차 설정 (전주 vs 금주 비교)")
     for i in range(3): 
         monday = today - timedelta(days=today.weekday() + (i * 7))
         friday = monday + timedelta(days=4)
         if monday > today: continue
         
-        label = f"📅 {monday.strftime('%Y년 %m월')} {(monday.day - 1) // 7 + 1}주차 ({monday.strftime('%m.%d')} ~ {friday.strftime('%m.%d')})"
+        label = f"📅 {monday.strftime('%Y년 %m월')} {(monday.day - 1) // 7 + 1}주차"
         date_options[label] = {
             "start": monday.strftime("%Y-%m-%d"),
             "end": friday.strftime("%Y-%m-%d"),
@@ -55,103 +53,103 @@ else:
     selected_label = st.sidebar.selectbox("🔍 조회 주차 선택", list(date_options.keys()))
     config = date_options[selected_label]
 
-exclude_decreased = st.sidebar.checkbox("📉 거래량 감소 종목 필터링 (제외)", value=False)
+exclude_decreased = st.sidebar.checkbox("📉 거래량 감소 종목 필터링 (메인 표에서 제외)", value=False)
 
 # ----------------------------------------------------------------------
-# 3. 고정 압축 라인업 마스터 데이터베이스 (ETF 20개 + 주식 50개 + 산업군 매핑)
+# 3. 고정 압축 라인업 마스터 데이터베이스 (ETF + 주식 명확한 한글 매핑)
 # ----------------------------------------------------------------------
 @st.cache_data
 def get_fixed_asset_pool(market_name):
-    # 각 시장별 ETF와 개별주식을 합쳐 엄선된 정예 풀 제공
     pools = {
         "S&P 500": [
-            "SPY", "IVV", "VOO", "XLK", "XLF", "XLV", "XLY", "XLC", "XLI", "XLE", # ETF 10개
+            "SPY", "IVV", "VOO", "XLK", "XLF", "XLV", "XLY", "XLC", "XLI", "XLE",
             "MSFT", "AAPL", "NVDA", "AMZN", "GOOGL", "META", "BRK-B", "UNH", "JPM", "XOM",
             "V", "PG", "AVGO", "HD", "MA", "COST", "MRK", "ABBV", "CVX", "PEP",
             "KO", "BAC", "WMT", "AMD", "MCD", "TMO", "CSCO", "INTC", "ADBE", "ABT",
-            "ORCL", "CMCSA", "NFLX", "QCOM", "TXN", "AMAT", "HON", "GE", "LOW", "PFE" # 주식 40개
+            "ORCL", "CMCSA", "NFLX", "QCOM", "TXN", "AMAT", "HON", "GE", "LOW", "PFE"
         ],
         "NASDAQ": [
-            "QQQ", "TQQQ", "SQQQ", "SOXL", "SOXS", "QLD", "PSQ", "SMH", "IGV", "IBB", # ETF 10개
+            "QQQ", "TQQQ", "SQQQ", "SOXL", "SOXS", "QLD", "PSQ", "SMH", "IGV", "IBB",
             "AAPL", "MSFT", "AMZN", "NVDA", "META", "GOOGL", "TSLA", "AVGO", "COST", "ASML",
             "AZN", "PEP", "LIN", "ADBE", "AMD", "CSCO", "TMUS", "CMCSA", "TXN", "QCOM",
             "AMAT", "ISRG", "HON", "MU", "INTU", "BKNG", "AMGN", "LRCX", "ADI", "PANW",
-            "MDLZ", "REGN", "PDD", "VRTX", "KLAC", "SNPS", "CDNS", "CHTR", "MAR", "ORLY" # 주식 40개
+            "MDLZ", "REGN", "PDD", "VRTX", "KLAC", "SNPS", "CDNS", "CHTR", "MAR", "ORLY"
         ],
         "KOSPI": [
-            "069500.KS", "114800.KS", "252670.KS", "122630.KS", "102110.KS", "139260.KS", "252710.KS", "337140.KS", "459580.KS", "229200.KS", # ETF 10개
+            "069500.KS", "114800.KS", "252670.KS", "122630.KS", "102110.KS", "139260.KS", "252710.KS", "337140.KS", "459580.KS", "229200.KS",
             "005930.KS", "000660.KS", "373220.KS", "207940.KS", "005380.KS", "005490.KS", "000270.KS", "035420.KS", "051910.KS", "006400.KS",
             "035720.KS", "068270.KS", "105560.KS", "055550.KS", "012330.KS", "028260.KS", "003550.KS", "011200.KS", "043700.KS", "015760.KS",
-            "034730.KS", "000810.KS", "086790.KS", "010950.KS", "003670.KS", "009150.KS", "032830.KS", "003490.KS", "016360.KS", "000720.KS" # 주식 30개
+            "034730.KS", "000810.KS", "086790.KS", "010950.KS", "003670.KS", "009150.KS", "032830.KS", "003490.KS", "016360.KS", "000720.KS"
         ],
         "KOSDAQ": [
-            "251340.KQ", "233740.KQ", "252730.KQ", "381180.KQ", "441540.KQ", "465350.KQ", "453650.KQ", "261220.KQ", "278530.KQ", "143860.KQ", # ETF 10개
+            "251340.KQ", "233740.KQ", "252730.KQ", "381180.KQ", "441540.KQ", "465350.KQ", "453650.KQ", "261220.KQ", "278530.KQ", "143860.KQ",
             "247540.KQ", "086520.KQ", "091990.KQ", "066970.KQ", "293490.KQ", "112040.KQ", "263750.KQ", "035760.KQ", "253450.KQ", "058470.KQ",
-            "078600.KQ", "036570.KQ", "145020.KQ", "067160.KQ", "034230.KQ", "041510.KQ", "036830.KQ", "039200.KQ", "022100.KQ", "084370.KQ" # 주식 20개
+            "078600.KQ", "036570.KQ", "145020.KQ", "067160.KQ", "034230.KQ", "041510.KQ", "036830.KQ", "039200.KQ", "022100.KQ", "084370.KQ"
         ]
     }
     return pools.get(market_name, [])
 
 @st.cache_data
 def get_master_meta_map():
-    # 명확한 한글명과 세부 산업군(섹터) 분류 매핑 (정확성 보장)
     return {
-        # 미국 자산
-        "SPY": {"name": "SPDR S&P 500", "sector": "지수추종 ETF"},
-        "IVV": {"name": "iShares Core S&P 500", "sector": "지수추종 ETF"},
-        "VOO": {"name": "Vanguard S&P 500", "sector": "지수추종 ETF"},
-        "QQQ": {"name": "Invesco QQQ (나스닥100)", "sector": "지수추종 ETF"},
-        "TQQQ": {"name": "나스닥 3배 레버리지", "sector": "레버리지/인버스 ETF"},
-        "SQQQ": {"name": "나스닥 3배 인버스", "sector": "레버리지/인버스 ETF"},
-        "SOXL": {"name": "필라델피아 반도체 3배 레버리지", "sector": "레버리지/인버스 ETF"},
-        "SOXS": {"name": "필라델피아 반도체 3배 인버스", "sector": "레버리지/인버스 ETF"},
-        "XLK": {"name": "기술주 섹터 ETF", "sector": "섹터별 ETF"},
-        "XLF": {"name": "금융주 섹터 ETF", "sector": "섹터별 ETF"},
-        "XLV": {"name": "헬스케어 섹터 ETF", "sector": "섹터별 ETF"},
-        "SMH": {"name": "반도체 섹터 ETF", "sector": "섹터별 ETF"},
-        "NVDA": {"name": "엔비디아", "sector": "반도체"},
-        "AMD": {"name": "AMD", "sector": "반도체"},
-        "INTC": {"name": "인텔", "sector": "반도체"},
-        "AVGO": {"name": "브로드컴", "sector": "반도체"},
-        "QCOM": {"name": "퀄컴", "sector": "반도체"},
-        "AAPL": {"name": "애플", "sector": "빅테크"},
-        "MSFT": {"name": "마이크로소프트", "sector": "빅테크"},
-        "AMZN": {"name": "아마존", "sector": "빅테크/전자상거래"},
-        "GOOGL": {"name": "알파벳(구글)", "sector": "빅테크"},
-        "META": {"name": "메타 Platforms", "sector": "빅테크"},
-        "TSLA": {"name": "테슬라", "sector": "모빌리티/전기차"},
-        "NFLX": {"name": "넷플릭스", "sector": "미디어/엔터"},
-        "JPM": {"name": "JP모건 체이스", "sector": "금융/은행"},
-        "BAC": {"name": "뱅크오브아메리카", "sector": "금융/은행"},
-        "XOM": {"name": "엑슨모빌", "sector": "에너지/정유"},
-        "COST": {"name": "코스트코", "sector": "소비재/유통"},
-        "WMT": {"name": "월마트", "sector": "소비재/유통"},
-        "KO": {"name": "코카콜라", "sector": "소비재/식음료"},
+        # 미국 ETF 라인업
+        "SPY": {"name": "S&P500 지수추종 (SPY)", "sector": "지수추종 ETF"},
+        "IVV": {"name": "S&P500 코어 (IVV)", "sector": "지수추종 ETF"},
+        "VOO": {"name": "뱅가드 S&P500 (VOO)", "sector": "지수추종 ETF"},
+        "QQQ": {"name": "나스닥100 지수추종 (QQQ)", "sector": "지수추종 ETF"},
+        "TQQQ": {"name": "나스닥 3배 레버리지 (TQQQ)", "sector": "레버리지/인버스 ETF"},
+        "SQQQ": {"name": "나스닥 3배 인버스 (SQQQ)", "sector": "레버리지/인버스 ETF"},
+        "SOXL": {"name": "반도체 3배 레버리지 (SOXL)", "sector": "레버리지/인버스 ETF"},
+        "SOXS": {"name": "반도체 3배 인버스 (SOXS)", "sector": "레버리지/인버스 ETF"},
+        "QLD": {"name": "나스닥 2배 레버리지 (QLD)", "sector": "레버리지/인버스 ETF"},
+        "PSQ": {"name": "나스닥 1배 인버스 (PSQ)", "sector": "레버리지/인버스 ETF"},
+        "XLK": {"name": "기술주 섹터 (XLK)", "sector": "섹터별 ETF"},
+        "XLF": {"name": "금융주 섹터 (XLF)", "sector": "섹터별 ETF"},
+        "XLV": {"name": "헬스케어 섹터 (XLV)", "sector": "섹터별 ETF"},
+        "XLY": {"name": "소비재 섹터 (XLY)", "sector": "섹터별 ETF"},
+        "XLC": {"name": "통신서비스 섹터 (XLC)", "sector": "섹터별 ETF"},
+        "XLI": {"name": "산업재 섹터 (XLI)", "sector": "섹터별 ETF"},
+        "XLE": {"name": "에너지 섹터 (XLE)", "sector": "섹터별 ETF"},
+        "SMH": {"name": "반도체 테마 (SMH)", "sector": "섹터별 ETF"},
+        "IGV": {"name": "소프트웨어 테마 (IGV)", "sector": "섹터별 ETF"},
+        "IBB": {"name": "바이오 테마 (IBB)", "sector": "섹터별 ETF"},
+        # 미국 개별주식
+        "NVDA": {"name": "엔비디아", "sector": "반도체"}, "AMD": {"name": "AMD", "sector": "반도체"},
+        "INTC": {"name": "인텔", "sector": "반도체"}, "AVGO": {"name": "브로드컴", "sector": "반도체"},
+        "QCOM": {"name": "퀄컴", "sector": "반도체"}, "AAPL": {"name": "애플", "sector": "빅테크"},
+        "MSFT": {"name": "마이크로소프트", "sector": "빅테크"}, "AMZN": {"name": "아마존", "sector": "빅테크/유통"},
+        "GOOGL": {"name": "알파벳(구글)", "sector": "빅테크"}, "META": {"name": "메타 Platforms", "sector": "빅테크"},
+        "TSLA": {"name": "테슬라", "sector": "모빌리티/전기차"}, "NFLX": {"name": "넷플릭스", "sector": "미디어/엔터"},
+        "JPM": {"name": "JP모건 체이스", "sector": "금융/은행"}, "BAC": {"name": "뱅크오브아메리카", "sector": "금융/은행"},
+        "XOM": {"name": "엑슨모빌", "sector": "에너지/정유"}, "COST": {"name": "코스트코", "sector": "소비재/유통"},
+        "WMT": {"name": "월마트", "sector": "소비재/유통"}, "KO": {"name": "코카콜라", "sector": "소비재/식음료"},
+        "BRK-B": {"name": "버크셔 해서웨이", "sector": "금융/지주"}, "UNH": {"name": "유나이티드헬스", "sector": "헬스케어"},
         
-        # 한국 자산
-        "069500.KS": {"name": "KODEX 200", "sector": "지수추종 ETF"},
-        "114800.KS": {"name": "KODEX 인버스", "sector": "레버리지/인버스 ETF"},
-        "252670.KS": {"name": "KODEX 200선물인버스2X", "sector": "레버리지/인버스 ETF"},
-        "122630.KS": {"name": "KODEX 레버리지", "sector": "레버리지/인버스 ETF"},
-        "251340.KQ": {"name": "KODEX 코스닥150인버스", "sector": "레버리지/인버스 ETF"},
-        "005930.KS": {"name": "삼성전자", "sector": "반도체"},
-        "000660.KS": {"name": "SK하이닉스", "sector": "반도체"},
-        "373220.KS": {"name": "LG에너지솔루션", "sector": "2차전지"},
-        "247540.KQ": {"name": "에코프로비엠", "sector": "2차전지"},
-        "086520.KQ": {"name": "에코프로", "sector": "2차전지"},
-        "207940.KS": {"name": "삼성바이오로직스", "sector": "제약/바이오"},
-        "068270.KS": {"name": "셀트리온", "sector": "제약/바이오"},
-        "005380.KS": {"name": "현대차", "sector": "자동차/모빌리티"},
-        "000270.KS": {"name": "기아", "sector": "자동차/모빌리티"},
-        "005490.KS": {"name": "POSCO홀딩스", "sector": "철강/소재"},
-        "035420.KS": {"name": "NAVER", "sector": "IT/플랫폼"},
-        "035720.KS": {"name": "카카오", "sector": "IT/플랫폼"},
-        "105560.KS": {"name": "KB금융", "sector": "금융/은행"},
-        "055550.KS": {"name": "신한지주", "sector": "금융/은행"}
+        # 한국 ETF 라인업
+        "069500.KS": {"name": "KODEX 200 (069500)", "sector": "지수추종 ETF"},
+        "114800.KS": {"name": "KODEX 인버스 (114800)", "sector": "레버리지/인버스 ETF"},
+        "252670.KS": {"name": "KODEX 200선물인버스2X (252670)", "sector": "레버리지/인버스 ETF"},
+        "122630.KS": {"name": "KODEX 레버리지 (122630)", "sector": "레버리지/인버스 ETF"},
+        "102110.KS": {"name": "TIGER 200 (102110)", "sector": "지수추종 ETF"},
+        "139260.KS": {"name": "TIGER 고배당 (139260)", "sector": "섹터별 ETF"},
+        "252710.KS": {"name": "TIGER 200선물인버스2X (252710)", "sector": "레버리지/인버스 ETF"},
+        "337140.KS": {"name": "KODEX 전장핵심부품 (337140)", "sector": "섹터별 ETF"},
+        "459580.KS": {"name": "KODEX 반도체핵심 (459580)", "sector": "섹터별 ETF"},
+        "229200.KS": {"name": "KODEX 코스닥150 (229200)", "sector": "지수추종 ETF"},
+        "251340.KQ": {"name": "KODEX 코스닥150인버스 (251340)", "sector": "레버리지/인버스 ETF"},
+        "233740.KQ": {"name": "KODEX 코스닥150레버리지 (233740)", "sector": "레버리지/인버스 ETF"},
+        # 한국 개별주식
+        "005930.KS": {"name": "삼성전자", "sector": "반도체"}, "000660.KS": {"name": "SK하이닉스", "sector": "반도체"},
+        "373220.KS": {"name": "LG에너지솔루션", "sector": "2차전지"}, "247540.KQ": {"name": "에코프로비엠", "sector": "2차전지"},
+        "086520.KQ": {"name": "에코프로", "sector": "2차전지"}, "207940.KS": {"name": "삼성바이오로직스", "sector": "제약/바이오"},
+        "068270.KS": {"name": "셀트리온", "sector": "제약/바이오"}, "005380.KS": {"name": "현대차", "sector": "자동차/모빌리티"},
+        "000270.KS": {"name": "기아", "sector": "자동차/모빌리티"}, "005490.KS": {"name": "POSCO홀딩스", "sector": "철강/소재"},
+        "035420.KS": {"name": "NAVER", "sector": "IT/플랫폼"}, "035720.KS": {"name": "카카오", "sector": "IT/플랫폼"},
+        "105560.KS": {"name": "KB금융", "sector": "금융/은행"}, "055550.KS": {"name": "신한지주", "sector": "금융/은행"}
     }
 
 # ----------------------------------------------------------------------
-# 4. 정밀 데이터 연산 엔진 (초고속 배치 다운로드 구조)
+# 4. 정밀 데이터 연산 엔진 (전기 vs 당기 거래량 동시 추출 구조)
 # ----------------------------------------------------------------------
 @st.cache_data(ttl=1800)
 def load_optimized_market_data(market_name, time_frame, config):
@@ -169,11 +167,10 @@ def load_optimized_market_data(market_name, time_frame, config):
         end_date_str = (datetime.strptime(config["end"], "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
 
     try:
-        # 단 한 번의 네트워크 요청으로 70개 종목 병렬 일괄 다운로드
         df = yf.download(tickers, start=start_date_str, end=end_date_str, group_by='ticker', progress=False)
         
         for t in tickers:
-            meta = meta_map.get(t, {"name": t.split('.')[0], "sector": "기타 대형주"})
+            meta = meta_map.get(t, {"name": t.split('.')[0] + " (기타)", "sector": "기타 대형주"})
             name = meta["name"]
             sector = meta["sector"]
             
@@ -214,9 +211,9 @@ def load_optimized_market_data(market_name, time_frame, config):
                 price_change = ((this_price - prev_price) / prev_price) * 100
             
             data_list.append({
-                "기업명": name, "티커": t.split('.')[0], "산업군": sector,
+                "명칭": name, "티커": t.split('.')[0], "산업군": sector,
                 "이전 주가": prev_price, "현재 주가": this_price, "주가 증감률(%)": round(price_change, 2),
-                "현재 거래량": this_vol, "거래량 증감률(%)": round(vol_change, 2)
+                "이전 거래량": prev_vol, "현재 거래량": this_vol, "거래량 증감률(%)": round(vol_change, 2)
             })
             
         return pd.DataFrame(data_list)
@@ -231,7 +228,7 @@ def highlight_rows(row):
     return [''] * len(row)
 
 # ----------------------------------------------------------------------
-# 5. 4대 지수 화면 렌더링 및 대시보드 시각화
+# 5. 시장별 화면 렌더링 시작
 # ----------------------------------------------------------------------
 tabs = st.tabs(["🇺🇸 S&P 500", "🇺🇸 NASDAQ", "🇰🇷 KOSPI", "🇰🇷 KOSDAQ"])
 market_names = ["S&P 500", "NASDAQ", "KOSPI", "KOSDAQ"]
@@ -243,53 +240,82 @@ for tab, m_name in zip(tabs, market_names):
         if df_raw.empty:
             st.warning("데이터 동기화 대기 중이거나 요청하신 일자의 데이터가 존재하지 않습니다.")
         else:
-            if exclude_decreased:
-                df_raw = df_raw[df_raw["거래량 증감률(%)"] >= 0]
-                
-            df_sorted = df_raw.sort_values(by="거래량 증감률(%)", ascending=False).reset_index(drop=True)
-            df_sorted.index = (df_sorted.index + 1).astype(str) + "위"
-            df_sorted.index.name = "순위"
-            df_sorted = df_sorted.reset_index()
+            # ----------------------------------------------------------------------
+            # [요구사항 5 반영] 특징주 코너 브리핑 (급증 TOP 10 vs 급감 TOP 10 분리 및 요약)
+            # ----------------------------------------------------------------------
+            st.subheader(f"🔥 {m_name} 실시간 특징주 기술적 브리핑")
+            
+            col_up, col_down = st.columns(2)
+            
+            # 거래량 급증 TOP 10
+            df_top_up = df_raw.sort_values(by="거래량 증감률(%)", ascending=False).head(10)
+            with col_up:
+                st.markdown("### 📈 거래량 폭발 매수세 유입 (TOP 10)")
+                for idx, row in enumerate(df_top_up.itertuples(), 1):
+                    p_sign = "+" if row._6 >= 0 else ""
+                    st.write(f"**{idx}위. {row.명칭}** ({row.산업군})")
+                    st.caption(f"↳ 거래량 **+{row._9:,.1f}%** 폭증 | 주가 변동 **{p_sign}{row._6:.2f}%** (현재가: {row._5:,.2f})")
+            
+            # 거래량 급감 TOP 10
+            df_top_down = df_raw.sort_values(by="거래량 증감률(%)", ascending=True).head(10)
+            with col_down:
+                st.markdown("### 📉 거래 절벽 및 자금 이탈 (TOP 10)")
+                for idx, row in enumerate(df_top_down.itertuples(), 1):
+                    p_sign = "+" if row._6 >= 0 else ""
+                    st.write(f"**{idx}위. {row.명칭}** ({row.산업군})")
+                    st.caption(f"↳ 거래량 **{row._9:,.1f}%** 급감 | 주가 변동 **{p_sign}{row._6:.2f}%** (현재가: {row._5:,.2f})")
             
             # ----------------------------------------------------------------------
-            # [신규 기능] 4대 산업군 거래량 쏠림(머니플로우) 원그래프
+            # [요구사항 4 반영] 듀얼 머니플로우 원그래프 (전기 비중 vs 당기 비중 동시 비교)
             # ----------------------------------------------------------------------
-            st.subheader(f"🍩 {m_name} 산업군별 거래량 유입 비중 (머니플로우)")
-            st.caption("현재 어떤 섹터 및 ETF군에 가장 많은 자금(거래량)이 집중되고 있는지 직관적으로 보여줍니다.")
+            st.markdown("---")
+            period_label_prev = "전 영업일" if time_frame == "일단위 (Daily)" else "직전 주차"
+            period_label_curr = "당일 기준일" if time_frame == "일단위 (Daily)" else "선택 주차"
             
-            # 산업군별 현재 거래량의 합산 도출
-            df_sector = df_raw.groupby("산업군")["현재 거래량"].sum().reset_index()
+            st.subheader(f"🍩 {m_name} 섹터별 머니플로우 비교 ({period_label_prev} vs {period_label_curr})")
+            st.caption("좌측(이전 기간)과 우측(현재 기간)을 비교하여 돈이 어느 산업군으로 거대하게 이동하고 있는지 파악하세요.")
             
-            fig_pie = px.pie(
-                df_sector, values="현재 거래량", names="산업군",
-                hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel
+            df_sector = df_raw.groupby("산업군")[["이전 거래량", "현재 거래량"]].sum().reset_index()
+            
+            fig_pie = make_subplots(rows=1, cols=2, specs=[[{"type": "domain"}, {"type": "domain"}]],
+                                    subplot_titles=[f"◀ {period_label_prev} 자금 비중", f"▶ {period_label_curr} 자금 비중"])
+            
+            fig_pie.add_trace(
+                go.Pie(labels=df_sector["산업군"], values=df_sector["이전 거래량"], name=period_label_prev, hole=0.4),
+                1, 1
+            )
+            fig_pie.add_trace(
+                go.Pie(labels=df_sector["산업군"], values=df_sector["현재 거래량"], name=period_label_curr, hole=0.4),
+                1, 2
             )
             fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-            fig_pie.update_layout(height=400, margin=dict(l=10, r=10, t=20, b=10))
+            fig_pie.update_layout(height=400, margin=dict(l=10, r=10, t=40, b=10), showlegend=False)
             st.plotly_chart(fig_pie, use_container_width=True)
             
             # ----------------------------------------------------------------------
-            # 다이버전스 복합 판독 차트
+            # [요구사항 2, 3 보완] 다이버전스 복합 판독 차트 (X축에 명확한 ETF/종목 한글명 매핑)
             # ----------------------------------------------------------------------
             st.markdown("---")
-            st.subheader(f"📈 {m_name} 다이버전스 판독 차트 (거래량 변화율 Top 10)")
+            st.subheader(f"📈 {m_name} 다이버전스 판독 차트 (변화율 Top 10)")
             st.caption("💡 거래량은 급증(막대)하는데 주가는 정체/하락(선) 중이라면 **세력 진입(매수 기회)**, 거래량은 급감하는데 주가만 버틴다면 **이탈 국면(익절 타이밍)**입니다.")
             
-            df_chart = df_sorted.head(10).copy()
+            df_sorted_all = df_raw.sort_values(by="거래량 증감률(%)", ascending=False).reset_index(drop=True)
+            df_chart = df_sorted_all.head(10).copy()
+            
             fig = make_subplots(specs=[[{"secondary_y": True}]])
             
             fig.add_trace(
                 go.Bar(
-                    x=df_chart["기업명"], y=df_chart["거래량 증감률(%)"], 
+                    x=df_chart["명칭"], y=df_chart["거래량 증감률(%)"], 
                     name="거래량 증감률(%)", marker_color="#2ca02c",
                     customdata=df_chart[["티커", "현재 거래량", "산업군"]],
-                    hovertemplate="<b>%{x} (%{customdata[0]})</b><br>세부 섹터: %{customdata[2]}<br>거래량 변동: %{y:+.2f}%<br>현재 거래량: %{customdata[1]:,.0f}주<extra></extra>"
+                    hovertemplate="<b>%{x}</b><br>세부 섹터: %{customdata[2]}<br>거래량 변동: %{y:+.2f}%<br>현재 거래량: %{customdata[1]:,.0f}주<extra></extra>"
                 ), secondary_y=False
             )
             
             fig.add_trace(
                 go.Scatter(
-                    x=df_chart["기업명"], y=df_chart["주가 증감률(%)"], 
+                    x=df_chart["명칭"], y=df_chart["주가 증감률(%)"], 
                     name="주가 증감률(%)", mode="lines+markers",
                     line=dict(color="#d62728", width=4), marker=dict(size=9),
                     hovertemplate="<b>%{x}</b><br>주가 변동: %{y:+.2f}%<extra></extra>"
@@ -306,12 +332,22 @@ for tab, m_name in zip(tabs, market_names):
             st.plotly_chart(fig, use_container_width=True)
             
             # ----------------------------------------------------------------------
-            # 상세 데이터 팩트 시트
+            # [요구사항 1, 3 반영] 데이터 시트 (상위 50개 고정 출력)
             # ----------------------------------------------------------------------
             st.markdown("---")
-            st.subheader("📊 거래/주가 상세 지표")
+            st.subheader(f"📊 {m_name} 다이버전스 상세 데이터 시트 (상위 50개 고정)")
             
-            df_styled = df_sorted[["순위", "기업명", "티커", "산업군", "이전 주가", "현재 주가", "주가 증감률(%)", "현재 거래량", "거래량 증감률(%)"]]
+            if exclude_decreased:
+                df_filtered = df_sorted_all[df_sorted_all["거래량 증감률(%)"] >= 0]
+            else:
+                df_filtered = df_sorted_all
+                
+            df_top50 = df_filtered.head(50).copy()
+            df_top50.index = (df_top50.index + 1).astype(str) + "위"
+            df_top50.index.name = "순위"
+            df_top50 = df_top50.reset_index()
+            
+            df_styled = df_top50[["순위", "명칭", "티커", "산업군", "이전 주가", "현재 주가", "주가 증감률(%)", "현재 거래량", "거래량 증감률(%)"]]
             
             st.dataframe(
                 df_styled.style.format({
@@ -322,6 +358,6 @@ for tab, m_name in zip(tabs, market_names):
                     "거래량 증감률(%)": "{:+.2f}%"
                 }).apply(highlight_rows, axis=1),
                 use_container_width=True,
-                height=500,
+                height=550,
                 hide_index=True
             )
