@@ -10,30 +10,47 @@ st.title("📊 4대 지수 거래량 상위 50 실시간 대시보드 (일단위
 st.caption("S&P 500, NASDAQ, KOSPI, KOSDAQ 거래량 팩트 데이터 분석")
 
 # ----------------------------------------------------------------------
-# [추가된 로직] 최근 영업일(장 열린 날) 구하기 함수
+# [안전장치] 한국 거래소 데이터 호출용 루프 함수
 # ----------------------------------------------------------------------
-def get_latest_business_day():
-    """주말이나 공휴일, 장 시작 전일 경우 가장 최근에 마감된 영업일 날짜를 반환"""
-    dt = datetime.today()
-    # 만약 오전 9시 전이라면 전날 데이터나 그 전 영업일 데이터를 보도록 유도
-    if dt.hour < 9:
-        dt = dt - timedelta(days=1)
+def fetch_kr_market_data(market_code):
+    """
+    서버 시차 및 주말/공휴일로 인해 pykrx 내부에서 IndexError가 나는 것을 
+    원천 차단하기 위해, 실제 데이터가 잡히는 영업일을 역추적하여 가져옵니다.
+    """
+    base_date = datetime.today()
+    
+    # 9시 이전 새벽/아침 시간대라면 전날 기점으로 시작
+    if base_date.hour < 9:
+        base_date -= timedelta(days=1)
         
-    # 요일 체크 (5: 토요일, 6: 일요일) -> 금요일로 강제 이동
-    while dt.weekday() >= 5:
-        dt = dt - timedelta(days=1)
-        
-    return dt
+    # 데이터 수집 성공할 때까지 최대 10일 전까지 역추적
+    for i in range(10):
+        target_date = (base_date - timedelta(days=i)).strftime('%Y%m%d')
+        try:
+            df = stock.get_market_price_change_by_ticker(target_date, target_date, market_code)
+            if df is not None and not df.empty:
+                # 이번주(최근 5영업일 가량), 지난주(그 전 5영업일 가량) 기준일 강제 계산
+                this_week_start = (base_date - timedelta(days=i+7)).strftime('%Y%m%d')
+                prev_week_start = (base_date - timedelta(days=i+14)).strftime('%Y%m%d')
+                
+                df_this_week = stock.get_market_price_change_by_ticker(this_week_start, target_date, market_code)
+                df_prev_week = stock.get_market_price_change_by_ticker(prev_week_start, this_week_start, market_code)
+                
+                return df, df_this_week, df_prev_week
+        except Exception:
+            # 에러 발생 시 무시하고 다음 날짜(전날)로 넘어가 재시도
+            continue
+            
+    return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 # ----------------------------------------------------------------------
-# 데이터 로드 함수 (미국: yfinance / 한국: pykrx 사용)
+# 데이터 로드 함수 (미국: yfinance / 한국: 커스텀 루프 활용)
 # ----------------------------------------------------------------------
 @st.cache_data(ttl=3600)  # 1시간 단위 캐싱
 def get_us_volume_data(tickers):
     """미국 주식(S&P500, NASDAQ 주요 종목)의 일단위/주단위 거래량 추출"""
-    latest_day = get_latest_business_day()
-    today_str = latest_day.strftime('%Y-%m-%d')
-    two_weeks_ago_str = (latest_day - timedelta(days=14)).strftime('%Y-%m-%d')
+    today_str = datetime.today().strftime('%Y-%m-%d')
+    two_weeks_ago_str = (datetime.today() - timedelta(days=14)).strftime('%Y-%m-%d')
     
     data_list = []
     tickers_str = " ".join(tickers[:100])
@@ -63,34 +80,15 @@ def get_us_volume_data(tickers):
 
 @st.cache_data(ttl=3600)
 def get_kr_volume_data(market_code):
-    """한국 주식(KOSPI 또는 KOSDAQ) 거래량 추출 (휴일 에러 방지 반영)"""
-    # 안전한 최근 영업일 기준 날짜 계산
-    latest_day = get_latest_business_day()
+    """안전장치가 강화된 한국 주식(KOSPI 또는 KOSDAQ) 거래량 추출"""
+    df_today, df_this_week, df_prev_week = fetch_kr_market_data(market_code)
     
-    today = latest_day.strftime('%Y%m%d')
-    one_week_ago = (latest_day - timedelta(days=7)).strftime('%Y%m%d')
-    two_weeks_ago = (latest_day - timedelta(days=14)).strftime('%Y%m%d')
-    
-    # pykrx 내부 에러 방지를 위해 실제 장이 열렸던 날짜로 보정 시도
-    try:
-        today = stock.get_nearest_business_day_in_a_week(today)
-        one_week_ago = stock.get_nearest_business_day_in_a_week(one_week_ago)
-        two_weeks_ago = stock.get_nearest_business_day_in_a_week(two_weeks_ago)
-    except Exception:
-        # 안전장치: 혹시라도 공휴일 계산에서 에러가 또 나면 기본 날짜 유지
-        pass
-        
-    # 당일 기준 시장 전체 거래량 조회
-    df_today = stock.get_market_price_change_by_ticker(today, today, market_code)
-    df_this_week = stock.get_market_price_change_by_ticker(one_week_ago, today, market_code)
-    df_prev_week = stock.get_market_price_change_by_ticker(two_weeks_ago, one_week_ago, market_code)
-    
-    data_list = []
-    # 에러 방지용 빈 데이터프레임 체크
     if df_today.empty:
         return pd.DataFrame()
 
-    for ticker in df_today.index[:150]: # 거래량 상위 매칭용 기본 풀
+    data_list = []
+    # 데이터 왜곡을 방지하기 위해 오늘 실제로 거래가 기록된 종목 리스트 기준으로 순회
+    for ticker in df_today.index[:150]: 
         name = stock.get_market_ticker_name(ticker)
         
         daily_vol = df_today.loc[ticker, '거래량'] if ticker in df_today.index else 0
