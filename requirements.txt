@@ -1,4 +1,4 @@
 streamlit
 yfinance
-pykrx
+finance-datareader
 pandas
