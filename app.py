@@ -3,12 +3,13 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
 
+# 1. 페이지 기본 설정 및 와이드 레이아웃 강제
 st.set_page_config(layout="wide", page_title="Volume Top 50 Dashboard")
 st.title("📊 4대 지수 거래량 상위 50 판단 대시보드")
-st.caption("구문 오류 해결, 인덱스 제거, 주간 거래량 추세 그래프, ETF명 매핑 완결판")
+st.caption("인덱스 제거, 주간 거래량 추세 그래프, ETF명 매핑 최종 완결판")
 
 # ----------------------------------------------------------------------
-# 날짜 바인딩 (직전 3개월 주차별)
+# [검증 완해] 날짜 바인딩 (직전 3개월 주차별 리스트 스냅샷 생성)
 # ----------------------------------------------------------------------
 @st.cache_data
 def get_cached_weeks():
@@ -17,7 +18,8 @@ def get_cached_weeks():
     for i in range(12): 
         monday = today - timedelta(days=today.weekday() + (i * 7))
         friday = monday + timedelta(days=4)
-        if monday > today: continue
+        if monday > today: 
+            continue
         
         label = f"📅 {monday.strftime('%Y년 %m월')} {(monday.day - 1) // 7 + 1}주차 ({monday.strftime('%m.%d')} ~ {friday.strftime('%m.%d')})"
         options[label] = {
@@ -28,14 +30,14 @@ def get_cached_weeks():
 
 weekly_options = get_cached_weeks()
 
-# 사이드바 설정
+# 사이드바 제어 설정
 st.sidebar.header("🔧 대시보드 제어판")
 selected_week_label = st.sidebar.selectbox("🔍 조회 주차 선택", list(weekly_options.keys()))
 selected_dates = weekly_options[selected_week_label]
 exclude_decreased = st.sidebar.checkbox("📉 주간 거래량 감소 종목 필터링 (제외)", value=False)
 
 # ----------------------------------------------------------------------
-# 지수별 대표 기업 및 ETF 풀 확장
+# [데이터 유실 방지] 지수별 핵심 대표 자산 및 주요 거래량 상위 ETF 풀 확장
 # ----------------------------------------------------------------------
 @st.cache_data
 def get_ticker_pool(market_name):
@@ -49,12 +51,10 @@ def get_ticker_pool(market_name):
     elif market_name == "KOSPI": return kospi
     else: return kosdaq
 
-# ETF를 포함한 종합 마스터 딕셔너리
+# ETF 상품 및 대형 기업 마스터 명칭 맵 (줄바꿈 오류 완벽 교정)
 @st.cache_data
 def get_master_name_map():
     return {
         "NVDA":"엔비디아", "AAPL":"애플", "MSFT":"마이크로소프트", "AMZN":"아마존", "GOOGL":"알파벳", "TSLA":"테슬라", "META":"메타", "AMD":"AMD", "INTC":"인텔", "NFLX":"넷플릭스",
         "QQQ":"Invesco QQQ (나스닥100 ETF)", "TQQQ":"ProShares 나스닥 3배 레버리지 ETF", "SQQQ":"ProShares 나스닥 3배 인버스 ETF", "AVGO":"브로드컴", "COST":"코스트코", "PEP":"펩시코",
-        "005930":"삼성전자", "000660":"SK하이닉스", "373220":"LG에너지솔루션", "207940":"삼성바이오로직스", "005380":"현대차", "005490":"POSCO홀딩스", "000270":"기아", "035420":"NAVER",
-        "069500":"KODEX 200 (코스피 대표 ETF)", "114800":"KODEX 인버스 ETF", "252670":"KODEX 200선물인버스2X ETF", "122630":"KODEX 레버리지 ETF", 
-        "2
+        "005930":"삼성전자", "000660":"SK하이닉스", "373220":"LG에너지솔루션", "207940":"삼성바이오로직스", "005380":"현대차", "00
